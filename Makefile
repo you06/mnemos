@@ -1,4 +1,4 @@
-.PHONY: build vet clean run test test-integration docker
+.PHONY: build vet clean run test test-integration docker benchmark
 
 build:
 	cd server && go build -o mnemo-server ./cmd/mnemo-server
@@ -21,3 +21,5 @@ run: build
 docker:
 	docker build -t mnemo-server ./server
 
+benchmark:
+	@scripts/run-benchmarks.sh
