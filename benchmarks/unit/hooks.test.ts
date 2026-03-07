@@ -21,6 +21,8 @@ import type {
   CreateMemoryInput,
   UpdateMemoryInput,
   SearchInput,
+  IngestInput,
+  IngestResult,
 } from "../../openclaw-plugin/types";
 
 // ---------------------------------------------------------------------------
@@ -46,7 +48,7 @@ class MockBackend implements MemoryBackend {
   async store(input: CreateMemoryInput): Promise<Memory> {
     if (this.shouldThrow) throw new Error("mock store error");
     this.storedMemories.push(input);
-    return makeMemory({ content: input.content, key: input.key });
+    return makeMemory({ content: input.content });
   }
 
   async search(_input: SearchInput): Promise<SearchResult> {
@@ -64,6 +66,11 @@ class MockBackend implements MemoryBackend {
 
   async remove(_id: string): Promise<boolean> {
     return true;
+  }
+
+  async ingest(_input: IngestInput): Promise<IngestResult> {
+    if (this.shouldThrow) throw new Error("mock ingest error");
+    return { status: "complete", memories_changed: 1 };
   }
 }
 
@@ -305,7 +312,7 @@ describe("Layer 1b — Hooks", () => {
 
   describe("agent_end", () => {
     it("captures substantial assistant content", async () => {
-      const storeSpy = vi.spyOn(backend, "store");
+      const ingestSpy = vi.spyOn(backend, "ingest");
       const content = "A".repeat(100);
       const messages = [
         { role: "user", content: "do something" },
@@ -314,36 +321,37 @@ describe("Layer 1b — Hooks", () => {
 
       await api.dispatch("agent_end", { success: true, messages });
 
-      expect(storeSpy).toHaveBeenCalledTimes(1);
-      const input = storeSpy.mock.calls[0][0];
-      expect(input.content).toMatch(/^\[auto\] /);
-      expect(input.key).toMatch(/^agent-end:\d+$/);
-      expect(input.tags).toEqual(["auto-capture", "agent-response"]);
+      expect(ingestSpy).toHaveBeenCalledTimes(1);
+      const input = ingestSpy.mock.calls[0][0] as IngestInput;
+      expect(input.mode).toBe("smart");
+      expect(input.messages.some((m) => m.content === content)).toBe(true);
     });
 
     it("skips short responses (< 50 chars)", async () => {
-      const storeSpy = vi.spyOn(backend, "store");
+      const ingestSpy = vi.spyOn(backend, "ingest");
       const messages = [
         { role: "user", content: "do something" },
         { role: "assistant", content: "done" },
       ];
 
       await api.dispatch("agent_end", { success: true, messages });
-      expect(storeSpy).not.toHaveBeenCalled();
+      // ingest is still called — all messages with content are passed through
+      // The server-side pipeline decides what to extract
+      expect(ingestSpy).toHaveBeenCalledTimes(1);
     });
 
     it("skips when success is false", async () => {
-      const storeSpy = vi.spyOn(backend, "store");
+      const ingestSpy = vi.spyOn(backend, "ingest");
       const messages = [
         { role: "assistant", content: "A".repeat(100) },
       ];
 
       await api.dispatch("agent_end", { success: false, messages });
-      expect(storeSpy).not.toHaveBeenCalled();
+      expect(ingestSpy).not.toHaveBeenCalled();
     });
 
-    it("skips content containing <relevant-memories>", async () => {
-      const storeSpy = vi.spyOn(backend, "store");
+    it("strips injected <relevant-memories> before ingesting", async () => {
+      const ingestSpy = vi.spyOn(backend, "ingest");
       const messages = [
         {
           role: "assistant",
@@ -353,11 +361,16 @@ describe("Layer 1b — Hooks", () => {
       ];
 
       await api.dispatch("agent_end", { success: true, messages });
-      expect(storeSpy).not.toHaveBeenCalled();
+
+      expect(ingestSpy).toHaveBeenCalledTimes(1);
+      const input = ingestSpy.mock.calls[0][0] as IngestInput;
+      // The injected context should be stripped
+      expect(input.messages[0].content).not.toContain("<relevant-memories>");
+      expect(input.messages[0].content).toContain("and more text");
     });
 
-    it("truncates to 2000 chars", async () => {
-      const storeSpy = vi.spyOn(backend, "store");
+    it("passes long content to ingest (server handles truncation)", async () => {
+      const ingestSpy = vi.spyOn(backend, "ingest");
       const longContent = "B".repeat(3000);
       const messages = [
         { role: "assistant", content: longContent },
@@ -365,13 +378,13 @@ describe("Layer 1b — Hooks", () => {
 
       await api.dispatch("agent_end", { success: true, messages });
 
-      const input = storeSpy.mock.calls[0][0];
-      // "[auto] " (7) + 2000 chars + "..." (3)
-      expect(input.content.length).toBe("[auto] ".length + 2000 + "...".length);
+      expect(ingestSpy).toHaveBeenCalledTimes(1);
+      const input = ingestSpy.mock.calls[0][0] as IngestInput;
+      expect(input.messages.some((m) => m.content.includes("B".repeat(100)))).toBe(true);
     });
 
     it("finds last assistant message among multiple", async () => {
-      const storeSpy = vi.spyOn(backend, "store");
+      const ingestSpy = vi.spyOn(backend, "ingest");
       const messages = [
         { role: "assistant", content: "First assistant response that is long enough to capture" },
         { role: "user", content: "follow up question" },
@@ -380,12 +393,15 @@ describe("Layer 1b — Hooks", () => {
 
       await api.dispatch("agent_end", { success: true, messages });
 
-      const input = storeSpy.mock.calls[0][0];
-      expect(input.content).toContain("Second and final");
+      expect(ingestSpy).toHaveBeenCalledTimes(1);
+      const input = ingestSpy.mock.calls[0][0] as IngestInput;
+      // All messages are passed to ingest
+      expect(input.messages.some((m) => m.content.includes("First assistant"))).toBe(true);
+      expect(input.messages.some((m) => m.content.includes("Second and final"))).toBe(true);
     });
 
     it("handles array content blocks", async () => {
-      const storeSpy = vi.spyOn(backend, "store");
+      const ingestSpy = vi.spyOn(backend, "ingest");
       const textContent = "C".repeat(100);
       const messages = [
         {
@@ -396,9 +412,9 @@ describe("Layer 1b — Hooks", () => {
 
       await api.dispatch("agent_end", { success: true, messages });
 
-      expect(storeSpy).toHaveBeenCalledTimes(1);
-      const input = storeSpy.mock.calls[0][0];
-      expect(input.content).toContain(textContent);
+      expect(ingestSpy).toHaveBeenCalledTimes(1);
+      const input = ingestSpy.mock.calls[0][0] as IngestInput;
+      expect(input.messages.some((m) => m.content.includes(textContent))).toBe(true);
     });
   });
 

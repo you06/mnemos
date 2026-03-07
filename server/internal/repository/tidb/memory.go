@@ -279,7 +279,7 @@ func (r *MemoryRepo) List(ctx context.Context, f domain.MemoryFilter) ([]domain.
 	}
 
 	dataQuery := "SELECT " + allColumns + " FROM memories WHERE " +
-		where + " ORDER BY updated_at DESC LIMIT ? OFFSET ?"
+		where + " ORDER BY updated_at DESC, id ASC LIMIT ? OFFSET ?"
 	// Copy args to avoid mutating the original slice (append may reuse underlying array).
 	dataArgs := make([]any, len(args), len(args)+2)
 	copy(dataArgs, args)
@@ -406,7 +406,7 @@ func (r *MemoryRepo) VectorSearch(ctx context.Context, queryVec []float32, f dom
 	query := `SELECT ` + allColumns + `, VEC_COSINE_DISTANCE(embedding, ?) AS distance
 		 FROM memories
 		 WHERE ` + where + `
-		 ORDER BY VEC_COSINE_DISTANCE(embedding, ?)
+		 ORDER BY VEC_COSINE_DISTANCE(embedding, ?), id ASC
 		 LIMIT ?`
 
 	// args order: vecStr (SELECT), filter args..., vecStr (ORDER BY), limit
@@ -441,7 +441,7 @@ func (r *MemoryRepo) AutoVectorSearch(ctx context.Context, queryText string, f d
 	query := `SELECT ` + allColumns + `, VEC_EMBED_COSINE_DISTANCE(embedding, ?) AS distance
 		 FROM memories
 		 WHERE ` + where + `
-		 ORDER BY VEC_EMBED_COSINE_DISTANCE(embedding, ?)
+		 ORDER BY VEC_EMBED_COSINE_DISTANCE(embedding, ?), id ASC
 		 LIMIT ?`
 
 	fullArgs := make([]any, 0, len(args)+3)
@@ -475,7 +475,7 @@ func (r *MemoryRepo) KeywordSearch(ctx context.Context, query string, f domain.M
 	}
 
 	where := strings.Join(conds, " AND ")
-	sqlQuery := `SELECT ` + allColumns + ` FROM memories WHERE ` + where + ` ORDER BY updated_at DESC LIMIT ?`
+	sqlQuery := `SELECT ` + allColumns + ` FROM memories WHERE ` + where + ` ORDER BY updated_at DESC, id ASC LIMIT ?`
 	args = append(args, limit)
 
 	rows, err := r.db.QueryContext(ctx, sqlQuery, args...)
@@ -504,7 +504,7 @@ func (r *MemoryRepo) FTSSearch(ctx context.Context, query string, f domain.Memor
 	sqlQuery := `SELECT ` + allColumns + `, fts_match_word(?, content) AS fts_score
 		 FROM memories
 		 WHERE ` + where + ` AND fts_match_word(?, content)
-		 ORDER BY fts_match_word(?, content) DESC
+		 ORDER BY fts_match_word(?, content) DESC, id ASC
 		 LIMIT ?`
 
 	fullArgs := make([]any, 0, len(args)+4)

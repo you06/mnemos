@@ -177,6 +177,10 @@ export function registerHooks(
 ): void {
   const maxIngestBytes = options?.maxIngestBytes ?? DEFAULT_MAX_INGEST_BYTES;
 
+  // In-memory cache for before_prompt_build (TTL = 3 minutes)
+  const CACHE_TTL = 180_000;
+  let cache: { data: Memory[]; ts: number } | null = null;
+
   // --------------------------------------------------------------------------
   // before_prompt_build — inject relevant memories into every LLM call
   // --------------------------------------------------------------------------
@@ -188,8 +192,16 @@ export function registerHooks(
         const prompt = evt?.prompt;
         if (!prompt || prompt.length < MIN_PROMPT_LEN) return;
 
-        const result = await backend.search({ q: prompt, limit: MAX_INJECT });
-        const memories = result.data ?? [];
+        let memories: Memory[];
+        if (cache && Date.now() - cache.ts < CACHE_TTL) {
+          memories = cache.data;
+        } else {
+          const result = await backend.search({ q: prompt, limit: MAX_INJECT });
+          memories = result.data ?? [];
+          if (memories.length > 0) {
+            cache = { data: memories, ts: Date.now() };
+          }
+        }
 
         if (memories.length === 0) return;
 
@@ -210,7 +222,8 @@ export function registerHooks(
   // after_compaction — no-op placeholder (no client-side cache to invalidate)
   // --------------------------------------------------------------------------
   api.on("after_compaction", async (_event: unknown) => {
-    logger.info("[mnemo] Compaction detected — memories will be re-queried on next prompt");
+    cache = null;
+    logger.info("[mnemo] compaction detected — memories will be re-queried on next prompt");
   });
 
   // --------------------------------------------------------------------------
@@ -243,6 +256,7 @@ export function registerHooks(
 
       await backend.store({
         content: `[session-summary] ${summary}`,
+        key: `session:reset:${Date.now()}`,
         source: AUTO_CAPTURE_SOURCE,
         tags: ["auto-capture", "session-summary", "pre-reset"],
       });

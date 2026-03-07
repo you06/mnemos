@@ -20,21 +20,9 @@ describeWithServer("Layer 1a — ServerBackend", () => {
   let createdIds: string[];
 
   beforeAll(async () => {
-    // Provision a bench space via the unauthenticated bootstrap endpoint.
-    const resp = await fetch(`${apiUrl}/api/spaces`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: `bench-${Date.now()}`,
-        agent_name: "bench-agent",
-        agent_type: "benchmark",
-      }),
-    });
-    expect(resp.ok).toBe(true);
-    const body = (await resp.json()) as { ok: boolean; space_id: string; api_token: string };
-    expect(body.ok).toBe(true);
-
-    backend = new ServerBackend(apiUrl!, body.api_token, "bench-agent");
+    // Provision a bench tenant via the unauthenticated bootstrap endpoint.
+    backend = new ServerBackend(apiUrl!, "", "bench-agent");
+    await backend.register();
   });
 
   beforeEach(() => {
@@ -69,21 +57,12 @@ describeWithServer("Layer 1a — ServerBackend", () => {
       expect(mem.updated_at).toBeTruthy();
     });
 
-    it("creates with unique key", async () => {
-      const key = `${keyPrefix}:keyed`;
-      const mem = track(await backend.store({ content: "keyed content", key }));
-      expect(mem.key).toBe(key);
-      expect(mem.version).toBe(1);
-    });
-
-    it("upserts by key, increments version", async () => {
-      const key = `${keyPrefix}:upsert`;
-      const first = track(await backend.store({ content: "v1", key }));
-      const second = await backend.store({ content: "v2", key });
-
-      expect(second.id).toBe(first.id);
-      expect(second.content).toBe("v2");
-      expect(second.version).toBeGreaterThanOrEqual(2);
+    it("updates content via update method", async () => {
+      const mem = track(await backend.store({ content: `${keyPrefix} v1` }));
+      const updated = await backend.update(mem.id, { content: `${keyPrefix} v2` });
+      expect(updated).not.toBeNull();
+      expect(updated!.content).toBe(`${keyPrefix} v2`);
+      expect(updated!.version).toBeGreaterThanOrEqual(2);
     });
 
     it("stores with tags", async () => {
@@ -165,7 +144,6 @@ describeWithServer("Layer 1a — ServerBackend", () => {
         track(
           await backend.store({
             content: `${keyPrefix} paginate-${i}`,
-            key: `${keyPrefix}:page-${i}`,
           }),
         );
       }
@@ -173,12 +151,12 @@ describeWithServer("Layer 1a — ServerBackend", () => {
       await new Promise((r) => setTimeout(r, 500));
 
       const page1 = await backend.search({
-        key: `${keyPrefix}:page-`,
+        q: keyPrefix,
         limit: 2,
         offset: 0,
       });
       const page2 = await backend.search({
-        key: `${keyPrefix}:page-`,
+        q: keyPrefix,
         limit: 2,
         offset: 2,
       });

@@ -6,64 +6,66 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # ---------------------------------------------------------------------------
 # Configuration (override via env vars)
 # ---------------------------------------------------------------------------
-TIDB_VERSION="${TIDB_VERSION:-v8.5.5}"
-DB_HOST="${MNEMO_DB_HOST:-127.0.0.1}"
-DB_PORT="${MNEMO_DB_PORT:-4000}"
-DB_USER="${MNEMO_DB_USER:-root}"
-DB_PASS="${MNEMO_DB_PASS:-}"
+TIDB_ZERO_API="${TIDB_ZERO_API:-https://zero.tidbapi.com/v1alpha1/instances}"
 DB_NAME="${MNEMO_DB_NAME:-test}"
 SERVER_PORT="${MNEMO_BENCH_PORT:-18081}"
-
-DSN="${DB_USER}${DB_PASS:+:${DB_PASS}}@tcp(${DB_HOST}:${DB_PORT})/${DB_NAME}?parseTime=true"
 
 # ---------------------------------------------------------------------------
 # Cleanup on exit
 # ---------------------------------------------------------------------------
 SERVER_PID=""
-TIUP_PID=""
 cleanup() {
   if [[ -n "$SERVER_PID" ]]; then
     echo "--- Stopping mnemo-server (pid $SERVER_PID)"
     kill "$SERVER_PID" 2>/dev/null || true
     wait "$SERVER_PID" 2>/dev/null || true
   fi
-  if [[ -n "$TIUP_PID" ]]; then
-    echo "--- Stopping tiup playground (pid $TIUP_PID)"
-    kill "$TIUP_PID" 2>/dev/null || true
-    wait "$TIUP_PID" 2>/dev/null || true
-  fi
 }
 trap cleanup EXIT
 
 # ---------------------------------------------------------------------------
-# 1. Start TiDB via tiup playground
+# 1. Provision TiDB Zero cluster
 # ---------------------------------------------------------------------------
-echo "--- Starting tiup playground ${TIDB_VERSION}"
-tiup playground "$TIDB_VERSION" --without-monitor --tiflash=0 \
-  --host "$DB_HOST" --db.port "$DB_PORT" \
-  > /tmp/mnemo-bench-tiup.log 2>&1 &
-TIUP_PID=$!
+command -v jq >/dev/null 2>&1 || { echo "ERROR: jq is required but not installed."; exit 1; }
 
-# Wait for TiDB to accept connections
+echo "--- Provisioning TiDB Zero cluster"
+ZERO_RESP=$(curl -sf --retry 3 -X POST "$TIDB_ZERO_API" \
+  -H "Content-Type: application/json" \
+  -d '{"tag":"mnemo-bench"}')
+
+DB_HOST=$(echo "$ZERO_RESP" | jq -r '.instance.connection.host')
+DB_PORT=$(echo "$ZERO_RESP" | jq -r '.instance.connection.port')
+DB_USER=$(echo "$ZERO_RESP" | jq -r '.instance.connection.username')
+DB_PASS=$(echo "$ZERO_RESP" | jq -r '.instance.connection.password')
+CLUSTER_ID=$(echo "$ZERO_RESP" | jq -r '.instance.id')
+CLAIM_URL=$(echo "$ZERO_RESP" | jq -r '.instance.claimInfo.claimUrl')
+
+if [[ -z "$DB_HOST" || "$DB_HOST" == "null" ]]; then
+  echo "ERROR: Failed to parse TiDB Zero response:"
+  echo "$ZERO_RESP" | jq . 2>/dev/null || echo "$ZERO_RESP"
+  exit 1
+fi
+
+echo "    Cluster ID: $CLUSTER_ID"
+echo "    Host:       $DB_HOST:$DB_PORT"
+echo "    Claim URL:  $CLAIM_URL"
+
+DSN="${DB_USER}:${DB_PASS}@tcp(${DB_HOST}:${DB_PORT})/${DB_NAME}?parseTime=true&tls=true"
+
+# Wait for TiDB Zero cluster to accept connections
 echo "    Waiting for TiDB at ${DB_HOST}:${DB_PORT}..."
 for i in $(seq 1 60); do
   if MYSQL_PWD="$DB_PASS" mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" \
-       -e "SELECT 1" >/dev/null 2>&1; then
+       --ssl-mode=REQUIRED -e "SELECT 1" >/dev/null 2>&1; then
     echo "    TiDB ready."
     break
   fi
-  if ! kill -0 "$TIUP_PID" 2>/dev/null; then
-    echo "ERROR: tiup playground exited unexpectedly. Logs:"
-    tail -50 /tmp/mnemo-bench-tiup.log
-    exit 1
-  fi
-  sleep 1
+  sleep 2
 done
 
 if ! MYSQL_PWD="$DB_PASS" mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" \
-     -e "SELECT 1" >/dev/null 2>&1; then
-  echo "ERROR: TiDB failed to start within 60s. Logs:"
-  tail -50 /tmp/mnemo-bench-tiup.log
+     --ssl-mode=REQUIRED -e "SELECT 1" >/dev/null 2>&1; then
+  echo "ERROR: TiDB Zero cluster failed to become ready within 120s."
   exit 1
 fi
 
@@ -71,9 +73,8 @@ fi
 # 2. Apply schema
 # ---------------------------------------------------------------------------
 echo "--- Applying schema to ${DB_HOST}:${DB_PORT}/${DB_NAME}"
-# TiDB doesn't support DEFAULT on JSON columns — strip it before applying.
-sed "s/JSON\s\+NOT NULL DEFAULT\s\+('{}'/JSON/g" "$ROOT/server/schema.sql" \
-  | MYSQL_PWD="$DB_PASS" mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -D "$DB_NAME"
+MYSQL_PWD="$DB_PASS" mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -D "$DB_NAME" \
+  --ssl-mode=REQUIRED < "$ROOT/server/schema.sql"
 echo "    Schema applied."
 
 # ---------------------------------------------------------------------------

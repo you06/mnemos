@@ -43,6 +43,7 @@ export interface SearchResult {
 
 export interface CreateMemoryInput {
   content: string;
+  key?: string;
   source?: string;
   tags?: string[];
   metadata?: Record<string, unknown>;
