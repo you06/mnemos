@@ -1,12 +1,12 @@
 {
-  "name": "mnemo-benchmarks",
+  "name": "mnemo-integration-tests",
   "version": "0.0.1",
   "private": true,
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "test:1a": "vitest run unit/backend.test.ts",
-    "test:1b": "vitest run unit/hooks.test.ts"
+    "test:1a": "vitest run tests/backend.test.ts",
+    "test:1b": "vitest run tests/hooks.test.ts"
   },
   "devDependencies": {
     "vitest": "^3.0.0",

@@ -1,7 +1,7 @@
 /**
  * Layer 1a — ServerBackend unit tests against a live mnemo-server.
  *
- * Skips gracefully when MNEMO_BENCH_API_URL is not set.
+ * Skips gracefully when MNEMO_IT_API_URL is not set.
  *
  * Setup: provisions a fresh space via POST /api/spaces (unauthenticated),
  * then uses the returned token for all CRUD operations.
@@ -11,7 +11,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import { ServerBackend } from "../../openclaw-plugin/server-backend";
 import type { Memory } from "../../openclaw-plugin/types";
 
-const apiUrl = process.env.MNEMO_BENCH_API_URL;
+const apiUrl = process.env.MNEMO_IT_API_URL;
 const describeWithServer = apiUrl ? describe : describe.skip;
 
 describeWithServer("Layer 1a — ServerBackend", () => {

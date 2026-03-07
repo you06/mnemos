@@ -8,7 +8,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # ---------------------------------------------------------------------------
 TIDB_ZERO_API="${TIDB_ZERO_API:-https://zero.tidbapi.com/v1alpha1/instances}"
 DB_NAME="${MNEMO_DB_NAME:-test}"
-SERVER_PORT="${MNEMO_BENCH_PORT:-18081}"
+SERVER_PORT="${MNEMO_IT_PORT:-18081}"
 
 # ---------------------------------------------------------------------------
 # Cleanup on exit
@@ -31,7 +31,7 @@ command -v jq >/dev/null 2>&1 || { echo "ERROR: jq is required but not installed
 echo "--- Provisioning TiDB Zero cluster"
 ZERO_RESP=$(curl -sf --retry 3 -X POST "$TIDB_ZERO_API" \
   -H "Content-Type: application/json" \
-  -d '{"tag":"mnemo-bench"}')
+  -d '{"tag":"mnemo-it"}')
 
 DB_HOST=$(echo "$ZERO_RESP" | jq -r '.instance.connection.host')
 DB_PORT=$(echo "$ZERO_RESP" | jq -r '.instance.connection.port')
@@ -86,7 +86,7 @@ go build -o "$ROOT/server/mnemo-server" ./cmd/mnemo-server
 
 echo "--- Starting mnemo-server on port $SERVER_PORT"
 MNEMO_DSN="$DSN" MNEMO_PORT="$SERVER_PORT" "$ROOT/server/mnemo-server" \
-  > /tmp/mnemo-bench-server.log 2>&1 &
+  > /tmp/mnemo-it-server.log 2>&1 &
 SERVER_PID=$!
 
 # Wait for server to be ready
@@ -97,7 +97,7 @@ for i in $(seq 1 30); do
   fi
   if ! kill -0 "$SERVER_PID" 2>/dev/null; then
     echo "ERROR: Server exited unexpectedly. Logs:"
-    cat /tmp/mnemo-bench-server.log
+    cat /tmp/mnemo-it-server.log
     exit 1
   fi
   sleep 0.5
@@ -105,21 +105,21 @@ done
 
 if ! curl -sf "http://localhost:${SERVER_PORT}/healthz" >/dev/null 2>&1; then
   echo "ERROR: Server failed to start within 15s. Logs:"
-  cat /tmp/mnemo-bench-server.log
+  cat /tmp/mnemo-it-server.log
   exit 1
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Install benchmark deps (if needed)
+# 3. Install integration test deps (if needed)
 # ---------------------------------------------------------------------------
-cd "$ROOT/benchmarks"
+cd "$ROOT/integration-tests"
 if [[ ! -d node_modules ]]; then
-  echo "--- Installing benchmark dependencies"
+  echo "--- Installing integration test dependencies"
   npm install --silent
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Run all benchmark tests
+# 4. Run all integration tests
 # ---------------------------------------------------------------------------
-echo "--- Running benchmarks"
-MNEMO_BENCH_API_URL="http://localhost:${SERVER_PORT}" npm test
+echo "--- Running integration tests"
+MNEMO_IT_API_URL="http://localhost:${SERVER_PORT}" npm test
