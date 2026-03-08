@@ -253,9 +253,15 @@ Or if no `openclaw.json` exists, create:
 
 If result returns stored memory → setup successful.
 
-### Step 5 — What's Next
+### Step 5 — What's Next (automatic)
 
-`[AGENT]` Print the following to the user:
+> **Note:** Step 4 runs automatically via the plugin's `gateway:startup` hook.
+> After Step 3 writes `openclaw.json` and the gateway restarts, the plugin detects
+> `bootstrapped` is not yet `true`, shows the welcome message (space ID, recovery
+> info, next steps), and sets `bootstrapped: true` in config so it only appears once.
+>
+> If the bootstrap hook did not fire (e.g. older OpenClaw without `gateway:startup`),
+> print the following as a fallback:
 
 ```
 ✅ mem9 installed!

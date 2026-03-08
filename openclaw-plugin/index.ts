@@ -1,3 +1,5 @@
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { MemoryBackend } from "./backend.js";
 import { ServerBackend } from "./server-backend.js";
 import { registerHooks } from "./hooks.js";
@@ -276,6 +278,85 @@ const mnemoPlugin = {
       cfg.agentName ?? "agent",
     );
     registerHooks(api, hookBackend, api.logger, { maxIngestBytes: cfg.maxIngestBytes });
+
+    // --------------------------------------------------------------------------
+    // gateway:startup — show bootstrap welcome message on first startup
+    // --------------------------------------------------------------------------
+    const tenantID = cfg.tenantID ?? cfg.apiToken ?? cfg.userToken;
+    api.on("gateway:startup", async (event: unknown) => {
+      try {
+        if (cfg.bootstrapped) return;
+        if (!tenantID) return; // Step 3 not complete yet
+
+        const evt = event as {
+          messages?: Array<{ role: string; content: string }>;
+          context?: { workspaceDir?: string };
+        };
+
+        const welcomeMessage = [
+          "✅ mem9 installed!",
+          "",
+          "🧭 NEXT RECOMMENDED STEP",
+          "   Import your existing local memories first, so your cloud memory starts with your real history.",
+          "",
+          '   Say: "import memories to mem9"',
+          "   I will scan and upload supported local files automatically.",
+          "   Supported: memory.json, memories/*.json, sessions/*.json",
+          "",
+          "💾 YOUR MEM9 SPACE ID",
+          "",
+          `   SPACE_ID: ${tenantID}`,
+          "",
+          "   This is not a display name. It is the ID that points OpenClaw to your cloud memory space.",
+          "   Save it somewhere safe so you can reconnect to the same cloud memory later.",
+          "",
+          "♻️ RECOVERY",
+          "",
+          "   New machine / re-install:",
+          "   1. Install mem9 plugin again",
+          "   2. Put this same ID back into Step 3 config",
+          "   3. Your cloud memories reconnect immediately",
+          "",
+          "📦 BACKUP PLAN",
+          "",
+          "   Local backup:",
+          "   Keep your original local memory/session files before import.",
+          "",
+          "   Offsite recovery:",
+          "   Save the ID in your password manager,",
+          "   team vault, or another secure offsite location.",
+        ].join("\n");
+
+        // Push welcome message for the agent to display
+        if (evt?.messages && Array.isArray(evt.messages)) {
+          evt.messages.push({
+            role: "system",
+            content: welcomeMessage,
+          });
+        }
+
+        // Persist bootstrapped=true so this message only shows once
+        const workspaceDir = evt?.context?.workspaceDir;
+        if (workspaceDir) {
+          try {
+            const configPath = join(workspaceDir, "openclaw.json");
+            const raw = await readFile(configPath, "utf-8");
+            const parsed = JSON.parse(raw);
+            if (parsed?.plugins?.entries?.mem9?.config) {
+              parsed.plugins.entries.mem9.config.bootstrapped = true;
+              await writeFile(configPath, JSON.stringify(parsed, null, 2) + "\n", "utf-8");
+              api.logger.info("[mnemo] Bootstrap message shown; bootstrapped=true persisted");
+            }
+          } catch {
+            // Config write failed — message will show again next restart (acceptable)
+            api.logger.info("[mnemo] Could not persist bootstrapped flag; will retry next startup");
+          }
+        }
+      } catch (err) {
+        // Never block gateway startup
+        api.logger.error(`[mnemo] gateway:startup hook failed: ${String(err)}`);
+      }
+    });
   },
 };
 

@@ -21,6 +21,10 @@
       "userToken": {
         "type": "string",
         "description": "Legacy alias for tenantID"
+      },
+      "bootstrapped": {
+        "type": "boolean",
+        "description": "Set automatically after first startup. Do not set manually."
       }
     }
   },

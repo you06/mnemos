@@ -7,6 +7,9 @@ export interface PluginConfig {
 
   tenantName?: string;
 
+  // Set automatically after first startup bootstrap message. Do not set manually.
+  bootstrapped?: boolean;
+
   // Agent identity for server mode.
   // Defaults to "agent" if not set. Overridden by ctx.agentId at runtime.
   agentName?: string;
