@@ -161,8 +161,16 @@ When explaining it to the user, say:
 
 `[AGENT]`
 
+If this is the default profile.
+
 ```bash
 openclaw plugins install @mem9/mem9
+```
+
+Otherwise, install the plugin to the current profile.
+
+```bash
+openclaw --prifile {current_profile} plugins install @mem9/mem9
 ```
 
 ### Step 3 — Detect OpenClaw version
